@@ -1,142 +1,93 @@
-import yfinance as yf
 import datetime
 import time
 import os
-import smtplib
 import requests
 import json
-from email.mime.text import MIMEText
-from email.header import Header
+from duckduckgo_search import DDGS
 
-# Target Companies (Names only)
+# Target Companies (Name + Preferred Source)
 TARGETS = [
-    "三花智控",
-    "长飞光纤",
-    "宏和科技",
-    "阳光电源"
+    {"name": "三花智控", "site": "finance.yahoo.com"},
+    {"name": "长飞光纤", "site": "finance.yahoo.com"},
+    {"name": "宏和科技", "site": "finance.yahoo.com"},
+    {"name": "阳光电源", "site": "finance.yahoo.com"}
 ]
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
-def search_stock_code(name):
+def search_web(query, max_results=5):
     """
-    Search for stock code by name using Yahoo Finance API.
+    Search the web using DuckDuckGo.
     """
-    print(f"Searching code for: {name}...", flush=True)
+    print(f"Searching web for: {query}...", flush=True)
     try:
-        url = "https://query2.finance.yahoo.com/v1/finance/search"
-        params = {
-            "q": name,
-            "quotesCount": 5,
-            "newsCount": 0,
-            "enableFuzzyQuery": False,
-            "quotesQueryId": "tss_match_phrase_query"
-        }
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        data = response.json()
-        
-        if "quotes" in data and len(data["quotes"]) > 0:
-            # Prefer equity/stock results
-            for quote in data["quotes"]:
-                if quote.get("quoteType") == "EQUITY":
-                    symbol = quote["symbol"]
-                    print(f"  Found: {symbol} ({quote.get('longname')})")
-                    return symbol
-            # Fallback to first result
-            return data["quotes"][0]["symbol"]
-        
-        print(f"  No code found for {name}")
-        return None
+        results = DDGS().text(query, max_results=max_results)
+        return results if results else []
     except Exception as e:
         print(f"  Search error: {e}")
-        return None
+        return []
 
-def get_stock_data_raw(name):
-    """
-    Get raw data for a company to feed into LLM.
-    """
-    symbol = search_stock_code(name)
-    if not symbol:
-        return {"name": name, "symbol": "Unknown", "error": "Stock code not found"}
+def get_company_info(target):
+    name = target["name"]
+    site = target.get("site", "")
     
-    try:
-        ticker = yf.Ticker(symbol)
-        # Get price
-        try:
-            hist = ticker.history(period="5d")
-            if not hist.empty:
-                last_quote = hist.iloc[-1]
-                price = last_quote['Close']
-                prev_close = hist.iloc[-2]['Close'] if len(hist) > 1 else price
-                change_pct = ((price - prev_close) / prev_close) * 100
-                market_data = f"Price: {price:.2f}, Change: {change_pct:+.2f}%"
-            else:
-                market_data = "Market data unavailable"
-        except Exception:
-            market_data = "Market data unavailable"
-
-        # Get news
-        try:
-            news_items = ticker.news
-            news_summary = []
-            if news_items:
-                for item in news_items[:3]:
-                    news_summary.append(f"- {item.get('title')} ({item.get('link')})")
-            else:
-                news_summary = ["No recent news found on Yahoo Finance."]
-        except Exception:
-            news_summary = ["Failed to fetch news."]
-            
-        return {
-            "name": name,
-            "symbol": symbol,
-            "market_data": market_data,
-            "news": news_summary
-        }
-    except Exception as e:
-        return {"name": name, "symbol": symbol, "error": str(e)}
+    # Construct queries
+    # 1. Search for stock price/info specifically on the preferred site or generally
+    stock_query = f"{name} stock price site:{site}" if site else f"{name} stock price"
+    stock_results = search_web(stock_query, max_results=3)
+    
+    # 2. Search for recent news
+    news_query = f"{name} latest news financial"
+    news_results = search_web(news_query, max_results=5)
+    
+    return {
+        "name": name,
+        "stock_results": stock_results,
+        "news_results": news_results
+    }
 
 def generate_report_with_deepseek(raw_data_list):
     """
-    Use DeepSeek to generate the final report.
+    Use DeepSeek to analyze search results and generate the report.
     """
     if not DEEPSEEK_API_KEY:
-        return "Error: DEEPSEEK_API_KEY not set. Cannot generate intelligent report."
+        return "Error: DEEPSEEK_API_KEY not set."
 
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    # Prepare prompt
-    context_str = f"Date: {today}\n\nData:\n"
+    # Prepare prompt with raw search data
+    context_str = f"Date: {today}\n\n"
     for item in raw_data_list:
-        context_str += f"Company: {item['name']} ({item['symbol']})\n"
-        if 'error' in item:
-            context_str += f"Status: Error - {item['error']}\n"
-        else:
-            context_str += f"Market: {item['market_data']}\n"
-            context_str += "News:\n" + "\n".join(item['news']) + "\n"
-        context_str += "---\n"
+        context_str += f"=== Company: {item['name']} ===\n"
+        
+        context_str += "Search Results (Stock Info):\n"
+        for res in item['stock_results']:
+            context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
+            
+        context_str += "\nSearch Results (News):\n"
+        for res in item['news_results']:
+            context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
+        
+        context_str += "\n"
 
     system_prompt = """
-    You are a professional financial news analyst. 
-    Your task is to generate a daily summary report based on the provided raw data for several companies.
+    You are an advanced financial analyst AI.
+    Your task is to read the provided Web Search Results and compile a "Listed Company Daily News Monitor Report".
     
     Guidelines:
     1. **Title**: "上市公司每日新闻监测日报" + Date.
     2. **Structure**: One section per company.
-    3. **Content**: 
-       - Summarize market performance briefly.
-       - Summarize the news headlines provided.
-       - **CRITICAL**: If the data says "No code found", "Market data unavailable" AND "No recent news", you MUST explicitly state that you could not find relevant information for this company. Do NOT output a template with "N/A". Use natural language like "今日未检索到该公司的有效市场数据或新闻。" (No effective market data or news retrieved today).
-       - If there is news, list it with links.
-    4. **Tone**: Professional, objective, concise.
+    3. **Content Extraction**:
+       - **Market Performance**: Try to find the latest stock price, symbol, and trend (change %) from the "Stock Info" search snippets. If you see a recent date and price, use it. If data is missing or ambiguous, say "暂未获取到最新股价".
+       - **Latest News**: Summarize the most relevant and recent financial news from the "News" search snippets. Ignore irrelevant or old news.
+       - **Links**: When citing news, provide the source link in Markdown format `[Title](Link)`.
+    4. **Tone**: Professional, objective.
     5. **Language**: Simplified Chinese.
+    6. **Handling Missing Data**: If the search results don't contain useful info, honestly state "未检索到相关有效信息" (No relevant information found).
     """
 
-    user_prompt = f"Here is the raw data for today:\n{context_str}\n\nPlease generate the report."
+    user_prompt = f"Here is the raw search data:\n{context_str}\n\nPlease generate the report."
 
     payload = {
         "model": "deepseek-chat",
@@ -160,75 +111,33 @@ def generate_report_with_deepseek(raw_data_list):
         return result['choices'][0]['message']['content']
     except Exception as e:
         print(f"DeepSeek API failed: {e}")
-        return f"Report generation failed due to API error: {e}\n\nRaw Data:\n{context_str}"
-
-def send_email(subject, content):
-    sender = os.environ.get("EMAIL_SENDER")
-    password = os.environ.get("EMAIL_PASSWORD")
-    # Support multiple receivers split by comma
-    receivers_str = os.environ.get("EMAIL_RECEIVER", "1261875597@qq.com,1669675380@qq.com")
-    receivers = [r.strip() for r in receivers_str.split(',') if r.strip()]
-    
-    if not sender or not password:
-        print("Skipping email: EMAIL_SENDER or EMAIL_PASSWORD environment variable not set.")
-        return
-
-    # Determine SMTP server based on sender domain
-    smtp_server = "smtp.qq.com"
-    smtp_port = 465 # SSL
-    
-    if "@163.com" in sender:
-        smtp_server = "smtp.163.com"
-    elif "@gmail.com" in sender:
-        smtp_server = "smtp.gmail.com"
-    
-    try:
-        message = MIMEText(content, 'markdown', 'utf-8')
-        message['From'] = sender
-        message['To'] = ", ".join(receivers)
-        message['Subject'] = Header(subject, 'utf-8')
-
-        print(f"Connecting to SMTP server {smtp_server}...")
-        server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-        server.login(sender, password)
-        print("Logged in successfully.")
-        
-        server.sendmail(sender, receivers, message.as_string())
-        server.quit()
-        print(f"Email sent successfully to {', '.join(receivers)}!")
-    except Exception as e:
-        print(f"Failed to send email: {e}")
+        return f"Report generation failed: {e}"
 
 if __name__ == "__main__":
-    print("Starting Intelligent News Monitor...", flush=True)
+    print("Starting Intelligent News Monitor (Web Search Mode)...", flush=True)
     
-    # 1. Collect Data
+    # 1. Collect Data via Web Search
     raw_data = []
-    for name in TARGETS:
-        data = get_stock_data_raw(name)
+    for target in TARGETS:
+        data = get_company_info(target)
         raw_data.append(data)
-        time.sleep(1) # Rate limit politeness
+        time.sleep(2) # Be polite to DDG
         
     # 2. Generate Report via LLM
     if DEEPSEEK_API_KEY:
         report = generate_report_with_deepseek(raw_data)
     else:
-        print("WARNING: DEEPSEEK_API_KEY not set. Using basic fallback report.")
-        report = "# Monitor Report (Basic)\n\n"
-        for item in raw_data:
-            report += f"## {item['name']} ({item['symbol']})\n"
-            report += f"{item.get('market_data', 'No Data')}\n"
-            report += f"{item.get('news', ['No News'])[0]}\n\n"
-            report += "Note: Configure DEEPSEEK_API_KEY for intelligent reporting.\n"
+        report = "DEEPSEEK_API_KEY not set. Cannot analyze search results."
 
     print("\n" + "="*30 + " Generated Report " + "="*30 + "\n")
     print(report)
     
-    # 3. Save and Send
+    # 3. Save to file (Email disabled as requested)
     filename = f"daily_report_{datetime.date.today().strftime('%Y%m%d')}.md"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"\nReport saved to: {filename}")
     
-    email_subject = f"上市公司新闻日报 - {datetime.date.today().strftime('%Y-%m-%d')}"
-    send_email(email_subject, report)
+    # Email sending is temporarily disabled
+    # email_subject = f"上市公司新闻日报 - {datetime.date.today().strftime('%Y-%m-%d')}"
+    # send_email(email_subject, report)
