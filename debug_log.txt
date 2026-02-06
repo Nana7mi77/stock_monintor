@@ -1,0 +1,8 @@
+Script started.
+Function generate_workflow started.
+Sending request to DeepSeek API...
+Response status code: 200
+Response JSON parsed successfully.
+Content extracted.
+workflow.md written.
+Script finished.

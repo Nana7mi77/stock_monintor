@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+.env
+.venv
+env/
+venv/
+daily_report_*.md
+!daily_report_20260206_manual.md
+debug_*.py
+test_*.py
