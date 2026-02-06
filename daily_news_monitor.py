@@ -5,12 +5,12 @@ import requests
 import json
 from duckduckgo_search import DDGS
 
-# Target Companies (Name + Preferred Source)
+# Target Companies
 TARGETS = [
-    {"name": "三花智控", "site": "finance.yahoo.com"},
-    {"name": "长飞光纤", "site": "finance.yahoo.com"},
-    {"name": "宏和科技", "site": "finance.yahoo.com"},
-    {"name": "阳光电源", "site": "finance.yahoo.com"}
+    "三花智控",
+    "长飞光纤",
+    "宏和科技",
+    "阳光电源"
 ]
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
@@ -28,23 +28,17 @@ def search_web(query, max_results=5):
         print(f"  Search error: {e}")
         return []
 
-def get_company_info(target):
-    name = target["name"]
-    site = target.get("site", "")
-    
-    # Construct queries
-    # 1. Search for stock price/info specifically on the preferred site or generally
-    stock_query = f"{name} stock price site:{site}" if site else f"{name} stock price"
-    stock_results = search_web(stock_query, max_results=3)
-    
-    # 2. Search for recent news
-    news_query = f"{name} latest news financial"
-    news_results = search_web(news_query, max_results=5)
+def get_company_info(name):
+    """
+    Agentic search: We search for both stock data and news generally.
+    """
+    # 1. Broad Search for Company Today
+    query = f"{name} 股价 新闻 最新"
+    results = search_web(query, max_results=8)
     
     return {
         "name": name,
-        "stock_results": stock_results,
-        "news_results": news_results
+        "search_results": results
     }
 
 def generate_report_with_deepseek(raw_data_list):
@@ -60,34 +54,36 @@ def generate_report_with_deepseek(raw_data_list):
     context_str = f"Date: {today}\n\n"
     for item in raw_data_list:
         context_str += f"=== Company: {item['name']} ===\n"
-        
-        context_str += "Search Results (Stock Info):\n"
-        for res in item['stock_results']:
+        context_str += "Raw Search Results:\n"
+        for res in item['search_results']:
             context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
-            
-        context_str += "\nSearch Results (News):\n"
-        for res in item['news_results']:
-            context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
-        
         context_str += "\n"
 
     system_prompt = """
-    You are an advanced financial analyst AI.
-    Your task is to read the provided Web Search Results and compile a "Listed Company Daily News Monitor Report".
+    You are an intelligent financial assistant. 
+    You have been provided with raw web search results for specific companies.
     
-    Guidelines:
-    1. **Title**: "上市公司每日新闻监测日报" + Date.
-    2. **Structure**: One section per company.
-    3. **Content Extraction**:
-       - **Market Performance**: Try to find the latest stock price, symbol, and trend (change %) from the "Stock Info" search snippets. If you see a recent date and price, use it. If data is missing or ambiguous, say "暂未获取到最新股价".
-       - **Latest News**: Summarize the most relevant and recent financial news from the "News" search snippets. Ignore irrelevant or old news.
-       - **Links**: When citing news, provide the source link in Markdown format `[Title](Link)`.
-    4. **Tone**: Professional, objective.
-    5. **Language**: Simplified Chinese.
-    6. **Handling Missing Data**: If the search results don't contain useful info, honestly state "未检索到相关有效信息" (No relevant information found).
+    Your Task:
+    Generate a concise "Daily News Monitor Report" in Simplified Chinese.
+    
+    For each company:
+    1. **Identify Stock Info**: Extract the most recent stock price and change percentage if available in the snippets. If not found, explicitly say "未检索到最新股价".
+    2. **Summarize News**: Identify key financial news or announcements. If the search results are generic or old, say "暂无今日重大新闻".
+    3. **Provide Links**: Use the links provided in the raw data to reference your sources.
+    
+    Output Format:
+    # 上市公司每日新闻监测日报 [Date]
+    
+    ## [Company Name]
+    **市场表现**: [Price / Change or "未检索到"]
+    **最新动态**:
+    - [News Summary] ([Source Title](Source Link))
+    ...
+    
+    If no relevant info is found for a company, state it clearly.
     """
 
-    user_prompt = f"Here is the raw search data:\n{context_str}\n\nPlease generate the report."
+    user_prompt = f"Here is the search data:\n{context_str}\n\nPlease generate the report."
 
     payload = {
         "model": "deepseek-chat",
@@ -114,12 +110,12 @@ def generate_report_with_deepseek(raw_data_list):
         return f"Report generation failed: {e}"
 
 if __name__ == "__main__":
-    print("Starting Intelligent News Monitor (Web Search Mode)...", flush=True)
+    print("Starting Intelligent News Monitor (Agentic Search Mode)...", flush=True)
     
     # 1. Collect Data via Web Search
     raw_data = []
-    for target in TARGETS:
-        data = get_company_info(target)
+    for name in TARGETS:
+        data = get_company_info(name)
         raw_data.append(data)
         time.sleep(2) # Be polite to DDG
         
@@ -132,12 +128,9 @@ if __name__ == "__main__":
     print("\n" + "="*30 + " Generated Report " + "="*30 + "\n")
     print(report)
     
-    # 3. Save to file (Email disabled as requested)
+    # 3. Save to file
     filename = f"daily_report_{datetime.date.today().strftime('%Y%m%d')}.md"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"\nReport saved to: {filename}")
-    
-    # Email sending is temporarily disabled
-    # email_subject = f"上市公司新闻日报 - {datetime.date.today().strftime('%Y-%m-%d')}"
-    # send_email(email_subject, report)
+
