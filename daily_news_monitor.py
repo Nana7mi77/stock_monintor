@@ -7,10 +7,10 @@ from duckduckgo_search import DDGS
 
 # Target Companies
 TARGETS = [
-    "三花智控",
-    "长飞光纤",
-    "宏和科技",
-    "阳光电源"
+    {"name": "三花智控", "site": "finance.sina.com.cn"},
+    {"name": "长飞光纤", "site": "finance.sina.com.cn"},
+    {"name": "宏和科技", "site": "finance.sina.com.cn"},
+    {"name": "阳光电源", "site": "finance.sina.com.cn"}
 ]
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
@@ -28,16 +28,21 @@ def search_web(query, max_results=5):
         print(f"  Search error: {e}")
         return []
 
-def get_company_info(name):
+def get_company_info(target):
     """
-    Agentic search: We search for both stock data and news generally.
+    Site-specific search: We search for stock data and news on the specified site.
     """
-    # 1. Broad Search for Company Today
-    query = f"{name} 股价 新闻 最新"
+    name = target["name"]
+    site = target["site"]
+    
+    # 1. Site-Specific Search
+    # Query: site:finance.sina.com.cn 三花智控 股价 新闻
+    query = f"site:{site} {name} 股价 新闻"
     results = search_web(query, max_results=8)
     
     return {
         "name": name,
+        "site": site,
         "search_results": results
     }
 
@@ -53,34 +58,33 @@ def generate_report_with_deepseek(raw_data_list):
     # Prepare prompt with raw search data
     context_str = f"Date: {today}\n\n"
     for item in raw_data_list:
-        context_str += f"=== Company: {item['name']} ===\n"
+        context_str += f"=== Company: {item['name']} (Source: {item['site']}) ===\n"
         context_str += "Raw Search Results:\n"
         for res in item['search_results']:
             context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
         context_str += "\n"
 
     system_prompt = """
-    You are an intelligent financial assistant. 
-    You have been provided with raw web search results for specific companies.
+    You are an intelligent financial analyst.
+    You have been provided with raw web search results from specific financial websites (e.g., Sina Finance).
     
     Your Task:
     Generate a concise "Daily News Monitor Report" in Simplified Chinese.
     
     For each company:
-    1. **Identify Stock Info**: Extract the most recent stock price and change percentage if available in the snippets. If not found, explicitly say "未检索到最新股价".
-    2. **Summarize News**: Identify key financial news or announcements. If the search results are generic or old, say "暂无今日重大新闻".
-    3. **Provide Links**: Use the links provided in the raw data to reference your sources.
+    1. **Identify Stock Info**: Extract the most recent stock price and trend from the search snippets. If not found, say "未检索到最新股价".
+    2. **Summarize News**: Identify key financial news. Since the search is site-specific, prioritize the most relevant headlines.
+    3. **Provide Links**: Use the links provided in the raw data.
     
     Output Format:
     # 上市公司每日新闻监测日报 [Date]
     
     ## [Company Name]
+    **数据来源**: [Site]
     **市场表现**: [Price / Change or "未检索到"]
     **最新动态**:
     - [News Summary] ([Source Title](Source Link))
     ...
-    
-    If no relevant info is found for a company, state it clearly.
     """
 
     user_prompt = f"Here is the search data:\n{context_str}\n\nPlease generate the report."
@@ -110,12 +114,12 @@ def generate_report_with_deepseek(raw_data_list):
         return f"Report generation failed: {e}"
 
 if __name__ == "__main__":
-    print("Starting Intelligent News Monitor (Agentic Search Mode)...", flush=True)
+    print("Starting Intelligent News Monitor (Site-Specific Search Mode)...", flush=True)
     
     # 1. Collect Data via Web Search
     raw_data = []
-    for name in TARGETS:
-        data = get_company_info(name)
+    for target in TARGETS:
+        data = get_company_info(target)
         raw_data.append(data)
         time.sleep(2) # Be polite to DDG
         
@@ -133,4 +137,8 @@ if __name__ == "__main__":
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"\nReport saved to: {filename}")
+    
+    # Email sending
+    # email_subject = f"上市公司新闻日报 - {datetime.date.today().strftime('%Y-%m-%d')}"
+    # send_email(email_subject, report)
 
