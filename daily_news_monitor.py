@@ -114,7 +114,9 @@ def generate_report():
 def send_email(subject, content):
     sender = os.environ.get("EMAIL_SENDER")
     password = os.environ.get("EMAIL_PASSWORD")
-    receiver = os.environ.get("EMAIL_RECEIVER", "1261875597@qq.com")
+    # Support multiple receivers split by comma
+    receivers_str = os.environ.get("EMAIL_RECEIVER", "1261875597@qq.com,1669675380@qq.com")
+    receivers = [r.strip() for r in receivers_str.split(',') if r.strip()]
     
     if not sender or not password:
         print("Skipping email: EMAIL_SENDER or EMAIL_PASSWORD environment variable not set.")
@@ -129,13 +131,11 @@ def send_email(subject, content):
         smtp_server = "smtp.163.com"
     elif "@gmail.com" in sender:
         smtp_server = "smtp.gmail.com"
-        # Gmail often uses port 587 for TLS, but let's try SSL 465 first or handle logic
-        # For simplicity in this demo, we assume SSL capable standard servers like QQ/163
     
     try:
         message = MIMEText(content, 'markdown', 'utf-8')
         message['From'] = sender
-        message['To'] = receiver
+        message['To'] = ", ".join(receivers)
         message['Subject'] = Header(subject, 'utf-8')
 
         print(f"Connecting to SMTP server {smtp_server}...")
@@ -143,9 +143,9 @@ def send_email(subject, content):
         server.login(sender, password)
         print("Logged in successfully.")
         
-        server.sendmail(sender, [receiver], message.as_string())
+        server.sendmail(sender, receivers, message.as_string())
         server.quit()
-        print(f"Email sent successfully to {receiver}!")
+        print(f"Email sent successfully to {', '.join(receivers)}!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
