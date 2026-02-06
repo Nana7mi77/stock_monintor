@@ -1,6 +1,10 @@
 import yfinance as yf
 import datetime
 import time
+import os
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
 
 # Target Companies
 TARGETS = [
@@ -107,6 +111,44 @@ def generate_report():
 
     return report_content
 
+def send_email(subject, content):
+    sender = os.environ.get("EMAIL_SENDER")
+    password = os.environ.get("EMAIL_PASSWORD")
+    receiver = os.environ.get("EMAIL_RECEIVER", "1261875597@qq.com")
+    
+    if not sender or not password:
+        print("Skipping email: EMAIL_SENDER or EMAIL_PASSWORD environment variable not set.")
+        print("To send email, please set these variables in your environment or GitHub Secrets.")
+        return
+
+    # Determine SMTP server based on sender domain
+    smtp_server = "smtp.qq.com"
+    smtp_port = 465 # SSL
+    
+    if "@163.com" in sender:
+        smtp_server = "smtp.163.com"
+    elif "@gmail.com" in sender:
+        smtp_server = "smtp.gmail.com"
+        # Gmail often uses port 587 for TLS, but let's try SSL 465 first or handle logic
+        # For simplicity in this demo, we assume SSL capable standard servers like QQ/163
+    
+    try:
+        message = MIMEText(content, 'markdown', 'utf-8')
+        message['From'] = sender
+        message['To'] = receiver
+        message['Subject'] = Header(subject, 'utf-8')
+
+        print(f"Connecting to SMTP server {smtp_server}...")
+        server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+        server.login(sender, password)
+        print("Logged in successfully.")
+        
+        server.sendmail(sender, [receiver], message.as_string())
+        server.quit()
+        print(f"Email sent successfully to {receiver}!")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
 if __name__ == "__main__":
     print("开始执行新闻监测任务 (使用 yfinance)...", flush=True)
     report = generate_report()
@@ -118,3 +160,7 @@ if __name__ == "__main__":
     with open(filename, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"\n日报已保存至: {filename}")
+    
+    # Send Email
+    email_subject = f"上市公司新闻日报 - {datetime.date.today().strftime('%Y-%m-%d')}"
+    send_email(email_subject, report)
