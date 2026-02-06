@@ -3,7 +3,6 @@ import time
 import os
 import requests
 import json
-from duckduckgo_search import DDGS
 
 # Target Companies
 TARGETS = [
@@ -16,81 +15,41 @@ TARGETS = [
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
-def search_web(query, max_results=5):
+def generate_report_for_company(target):
     """
-    Search the web using DuckDuckGo.
-    """
-    print(f"Searching web for: {query}...", flush=True)
-    try:
-        results = DDGS().text(query, max_results=max_results)
-        return results if results else []
-    except Exception as e:
-        print(f"  Search error: {e}")
-        return []
-
-def get_company_info(target):
-    """
-    Site-specific search: We search for stock data and news on the specified site.
+    Ask DeepSeek directly to provide info (Simulating "Search itself" / Hallucination check).
     """
     name = target["name"]
     site = target["site"]
-    
-    # 1. Site-Specific Search
-    # Query: site:finance.sina.com.cn 三花智控 股价 新闻
-    query = f"site:{site} {name} 股价 新闻"
-    results = search_web(query, max_results=8)
-    
-    return {
-        "name": name,
-        "site": site,
-        "search_results": results
-    }
-
-def generate_report_with_deepseek(raw_data_list):
-    """
-    Use DeepSeek to analyze search results and generate the report.
-    """
-    if not DEEPSEEK_API_KEY:
-        return "Error: DEEPSEEK_API_KEY not set."
-
     today = datetime.date.today().strftime("%Y-%m-%d")
-    
-    # Prepare prompt with raw search data
-    context_str = f"Date: {today}\n\n"
-    for item in raw_data_list:
-        context_str += f"=== Company: {item['name']} (Source: {item['site']}) ===\n"
-        context_str += "Raw Search Results:\n"
-        for res in item['search_results']:
-            context_str += f"- Title: {res.get('title')}\n  Snippet: {res.get('body')}\n  Link: {res.get('href')}\n"
-        context_str += "\n"
 
     system_prompt = """
-    You are an intelligent financial analyst.
-    You have been provided with raw web search results from specific financial websites (e.g., Sina Finance).
+    You are an intelligent financial assistant.
+    The user wants you to act as if you can browse the specified website to get real-time information.
     
     Your Task:
-    Generate a concise "Daily News Monitor Report" in Simplified Chinese.
+    Provide a "Daily News Monitor Report" for the specified company.
     
-    For each company:
-    1. **Identify Stock Info**: Extract the most recent stock price and trend from the search snippets. If not found, say "未检索到最新股价".
-    2. **Summarize News**: Identify key financial news. Since the search is site-specific, prioritize the most relevant headlines.
-    3. **Provide Links**: Use the links provided in the raw data.
+    **Important Note**: 
+    If you do not have real-time internet access, please use your internal knowledge to provide *general* information about where to find this data, 
+    OR (if allowed by your capabilities) perform the search. 
+    If you cannot access today's real-time data, please honestly state: "Due to lack of real-time internet access, I cannot provide today's specific data."
     
-    Output Format:
-    # 上市公司每日新闻监测日报 [Date]
-    
-    ## [Company Name]
-    **数据来源**: [Site]
-    **市场表现**: [Price / Change or "未检索到"]
-    **最新动态**:
-    - [News Summary] ([Source Title](Source Link))
-    ...
+    However, if you DO have access (e.g. via specific model features), please provide:
+    1. Latest Stock Price.
+    2. Latest News Headlines.
     """
 
-    user_prompt = f"Here is the search data:\n{context_str}\n\nPlease generate the report."
+    user_prompt = f"""
+    Target Company: {name}
+    Preferred Source: {site}
+    Date: {today}
+
+    Please search for the latest stock price and news for {name} on {site} and summarize it.
+    """
 
     payload = {
-        "model": "deepseek-chat",
+        "model": "deepseek-chat", 
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -103,7 +62,7 @@ def generate_report_with_deepseek(raw_data_list):
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
     }
 
-    print("Calling DeepSeek API to generate report...", flush=True)
+    print(f"Asking DeepSeek about {name}...", flush=True)
     try:
         response = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
@@ -111,31 +70,29 @@ def generate_report_with_deepseek(raw_data_list):
         return result['choices'][0]['message']['content']
     except Exception as e:
         print(f"DeepSeek API failed: {e}")
-        return f"Report generation failed: {e}"
+        return f"Error fetching info for {name}: {e}"
 
 if __name__ == "__main__":
-    print("Starting Intelligent News Monitor (Site-Specific Search Mode)...", flush=True)
+    print("Starting Intelligent News Monitor (Direct API Mode)...", flush=True)
     
-    # 1. Collect Data via Web Search
-    raw_data = []
-    for target in TARGETS:
-        data = get_company_info(target)
-        raw_data.append(data)
-        time.sleep(2) # Be polite to DDG
-        
-    # 2. Generate Report via LLM
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    final_report = f"# 上市公司每日新闻监测日报 {today}\n\n"
+    
     if DEEPSEEK_API_KEY:
-        report = generate_report_with_deepseek(raw_data)
+        for target in TARGETS:
+            content = generate_report_for_company(target)
+            final_report += f"## {target['name']}\n{content}\n\n---\n\n"
+            time.sleep(1)
     else:
-        report = "DEEPSEEK_API_KEY not set. Cannot analyze search results."
+        final_report += "DEEPSEEK_API_KEY not set."
 
     print("\n" + "="*30 + " Generated Report " + "="*30 + "\n")
-    print(report)
+    print(final_report)
     
     # 3. Save to file
     filename = f"daily_report_{datetime.date.today().strftime('%Y%m%d')}.md"
     with open(filename, "w", encoding="utf-8") as f:
-        f.write(report)
+        f.write(final_report)
     print(f"\nReport saved to: {filename}")
     
     # Email sending
